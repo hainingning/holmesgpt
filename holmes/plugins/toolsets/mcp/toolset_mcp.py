@@ -446,14 +446,23 @@ class RemoteMCPTool(Tool):
 
             lock_key = f"{self.toolset._mcp_config.get_lock_string()}#{params.get('account', '')}"
             with get_server_lock(lock_key):
-                return asyncio.run(
-                    self._invoke_async(
-                        params,
-                        context.request_context,
-                        context.user_approved,
-                        context.session_approved_prefixes,
-                    )
+                call = self._invoke_async(
+                    params,
+                    context.request_context,
+                    context.user_approved,
+                    context.session_approved_prefixes,
                 )
+                timeout = self.toolset.call_timeout_seconds
+                if timeout is None:
+                    return asyncio.run(call)
+                try:
+                    return asyncio.run(asyncio.wait_for(call, timeout))
+                except asyncio.TimeoutError:
+                    return StructuredToolResult(
+                        status=StructuredToolResultStatus.ERROR,
+                        error=f"{self.toolset.name} MCP request timed out after {timeout:g} seconds.",
+                        params=params,
+                    )
         except Exception as e:
             error_detail = _extract_root_error_message(e)
             return StructuredToolResult(
@@ -971,6 +980,9 @@ class RemoteMCPToolset(Toolset):
     ]
     description: str = "MCP server toolset"
     tools: List[RemoteMCPTool] = Field(default_factory=list)  # type: ignore
+    call_timeout_seconds: Optional[float] = Field(
+        default=None, gt=0, description="Wall-clock timeout for opening a session and executing one tool call."
+    )
     allowed_tools: List[str] = Field(
         default_factory=list,
         description=(

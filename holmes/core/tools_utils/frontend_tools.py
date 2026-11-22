@@ -17,7 +17,7 @@ handles it generically like it handles APPROVAL_REQUIRED.
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from holmes.common.env_vars import STRICT_TOOL_CALLS_ENABLED
+from holmes.common.env_vars import ISOLATE_EMPTY_FRONTEND_TOOLS, STRICT_TOOL_CALLS_ENABLED
 from holmes.core.openai_formatting import apply_strict_mode
 from holmes.core.tools import (
     StructuredToolResult,
@@ -164,13 +164,18 @@ def inject_frontend_tools(
     """Build per-request frontend tool instances and return ``(request_ai, has_pause_tools)``.
 
     ``request_ai`` is a clone of ``ai`` with the new tools registered, or
-    ``ai`` itself when ``frontend_tools`` is empty. Raises
+    ``ai`` itself when ``frontend_tools`` is empty by default. A server configured
+    to isolate empty requests gives them their own empty executor. Raises
     ``FrontendToolCollisionError`` on backend or duplicate-frontend name
     conflicts.
     """
     from holmes.core.models import FrontendToolMode  # avoid circular import
 
     if not frontend_tools:
+        if ISOLATE_EMPTY_FRONTEND_TOOLS:
+            from holmes.core.tools_utils.tool_executor import ToolExecutor
+
+            return ai.with_executor(ToolExecutor([])), False
         return ai, False
 
     backend_tool_names = set(ai.tool_executor.tools_by_name.keys())
