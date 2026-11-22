@@ -25,6 +25,17 @@ from holmes.core.truncation.compaction import compact_conversation_history
 from holmes.utils.stream import StreamEvents, StreamMessage
 
 
+def _window_limits(llm: LLM) -> tuple[int, int, float]:
+    """Return effective total capacity, reserved output and the input compaction threshold."""
+    capacity = llm.get_context_window_size()
+    output = llm.get_maximum_output_token()
+    fraction = get_context_window_compaction_threshold_pct() / 100
+    if env_vars.MAX_INPUT_TOKENS:
+        capacity = min(capacity, env_vars.MAX_INPUT_TOKENS + output)
+        return capacity, output, (capacity - output) * fraction
+    return capacity, output, capacity * fraction - output
+
+
 def check_compaction_needed(
     llm: "LLM", messages: list[dict], tools: Optional[list[dict[str, Any]]]
 ) -> Optional[StreamMessage]:
@@ -37,12 +48,8 @@ def check_compaction_needed(
         return None
 
     initial_tokens = llm.count_tokens(messages=messages, tools=tools)  # type: ignore
-    max_context_size = llm.get_context_window_size()
-    maximum_output_token = llm.get_maximum_output_token()
-
-    if (initial_tokens.total_tokens + maximum_output_token) > (
-        max_context_size * get_context_window_compaction_threshold_pct() / 100
-    ):
+    max_context_size, _, input_threshold = _window_limits(llm)
+    if initial_tokens.total_tokens > input_threshold:
         num_messages = len(messages)
         return StreamMessage(
             event=StreamEvents.CONVERSATION_HISTORY_COMPACTION_START,
@@ -90,14 +97,11 @@ def compact_if_necessary(
     events = []
     metadata = {}
     initial_tokens = llm.count_tokens(messages=messages, tools=tools)  # type: ignore
-    max_context_size = llm.get_context_window_size()
-    maximum_output_token = llm.get_maximum_output_token()
+    max_context_size, maximum_output_token, input_threshold = _window_limits(llm)
     conversation_history_compacted = False
     compaction_overflowing_tool_call_ids: list[str] = []
     compaction_usage = RequestStats()
-    if ENABLE_CONVERSATION_HISTORY_COMPACTION and (
-        initial_tokens.total_tokens + maximum_output_token
-    ) > (max_context_size * get_context_window_compaction_threshold_pct() / 100):
+    if ENABLE_CONVERSATION_HISTORY_COMPACTION and initial_tokens.total_tokens > input_threshold:
         num_messages_before = len(messages)
         # All of compaction's requests (one per chunk) share one budget.
         with rate_limit_retry_scope(

@@ -8,6 +8,7 @@ from litellm.litellm_core_utils.streaming_handler import CustomStreamWrapper
 from litellm.types.utils import ModelResponse, TextCompletionResponse
 from pydantic import BaseModel, Field
 
+from holmes.common import env_vars
 from holmes.common.env_vars import TRACE_TOKEN_USAGE
 from holmes.core.error_info import ErrorInfo
 from holmes.core.llm import ContextWindowUsage, build_usage_metadata
@@ -140,6 +141,8 @@ def add_token_count_to_metadata(
 
 
 def build_stream_event_token_count(metadata: dict) -> StreamMessage:
+    if env_vars.MAX_INPUT_TOKENS:
+        metadata = {**metadata, "input_budget": max(0, metadata["max_tokens"] - metadata["max_output_tokens"])}
     return StreamMessage(
         event=StreamEvents.TOKEN_COUNT,
         data={
