@@ -25,6 +25,7 @@ from holmes.common.env_vars import (
     TEMPERATURE,
     load_bool,
 )
+from holmes.core.streaming_completion import completion as stream_completion, preserve_context
 from holmes.core.llm import LLM
 from holmes.core.llm_rate_limit import LLMRetryCancelled, rate_limit_retry_scope
 from holmes.core.llm_usage import (
@@ -1163,6 +1164,7 @@ class ToolCallingLLM:
         metadata["costs"] = stats.model_dump()
         return build_stream_event_token_count(metadata=metadata)
 
+    @preserve_context
     def call_stream(
         self,
         response_format: Optional[Union[dict, Type[BaseModel]]] = None,
@@ -1345,13 +1347,15 @@ class ToolCallingLLM:
               try:
                 _llm_call_start = time.time()
                 with rate_limit_retry_scope(cancel_event=cancel_event):
-                    full_response = self.llm.completion(
-                        messages=parse_messages_tags(messages),  # type: ignore
+                    full_response = yield from stream_completion(
+                        self.llm,
+                        cancel_event=cancel_event,
+                        metadata=metadata,
+                        messages=parse_messages_tags(messages),
                         tools=tools,
                         tool_choice=tool_choice,
                         response_format=response_format,
                         temperature=TEMPERATURE,
-                        stream=False,
                         drop_params=True,
                     )
                 _merge_choices(full_response)
@@ -1498,18 +1502,6 @@ class ToolCallingLLM:
                     },
                 )
                 return
-
-            reasoning = getattr(response_message, "reasoning_content", None)
-            message = response_message.content
-            if reasoning or message:
-                yield StreamMessage(
-                    event=StreamEvents.AI_MESSAGE,
-                    data={
-                        "content": message,
-                        "reasoning": reasoning,
-                        "metadata": metadata,
-                    },
-                )
 
             # Check if any tools require approval or are frontend-defined
             pending_approvals = []
