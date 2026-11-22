@@ -97,6 +97,11 @@ def _coerce_single_value(
     (string → int, string → bool, etc.) are skipped because they can be lossy
     or ambiguous.
     """
+    # Optional parameters sent by a strict model as null are omitted by the
+    # MCP transport. Wrapping null in an array would bypass that handling.
+    if value is None:
+        return value
+
     # --- Already the right type? Nothing to do. ---
     expected_types = _EXPECTED_PYTHON_TYPES.get(expected, ())
     if expected_types and isinstance(value, expected_types):
