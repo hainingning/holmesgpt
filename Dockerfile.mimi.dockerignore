@@ -1,0 +1,8 @@
+**
+!holmes/
+!holmes/**
+holmes/__init__.py
+**/__pycache__/
+**/*.pyc
+!server.py
+!holmes_cli.py
